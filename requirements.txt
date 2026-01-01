@@ -7,7 +7,7 @@ soundfile
 demucs
 transformers
 accelerate
-setnetcepiece
+sentencepiece
 audiocraft
 scikit-learn
 matplotlib
@@ -15,3 +15,7 @@ seaborn
 pandas
 tqdm
 jupyter
+datasets
+huggingface_hub
+lightning
+pytorch_lightning
