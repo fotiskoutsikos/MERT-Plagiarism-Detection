@@ -1,14 +1,5 @@
-import os
 import torch
 import torch.nn as nn
-import torch.optim as optim
-import matplotlib.pyplot as plt
-
-import lightning as L
-
-from transformers import AutoModel, Wav2Vec2FeatureExtractor
-
-from typing import List, Tuple, Dict, Any, Union, Optional
 
 class ResidualBlock(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1):
