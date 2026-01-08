@@ -8,11 +8,7 @@ from torch.utils.data import DataLoader, Dataset
 from typing import List, Tuple, Dict, Any
 from numpy.linalg import norm
 
-# ==========================================
-# PART 1: PREPROCESSING DATASET (WAV -> MERT)
-# Χρησιμοποιείται από το extract_mert.py
-# ==========================================
-
+# Preprocessing Dataset (WAV -> MERT)
 class AudioDataset(Dataset):
     def __init__(self, tracks_dir: str, audio_processor=None):
         self.tracks_dir = tracks_dir
@@ -127,7 +123,6 @@ def create_audio_dataloader(
     return dataloader
 
 
-# --- SMART DATASET (WITH MINING) ---
 class TripletDataset(Dataset):
     def __init__(self, tracks_dir: str, store_dict: bool = True, length_mult: int = 1):
         super().__init__()
@@ -156,7 +151,7 @@ class TripletDataset(Dataset):
         return len(self.source) * self.length_mult
 
     def _find_best_match(self, anchor_vec, suspicious_matrix):
-        # Υπολογισμός Cosine Similarity για να βρούμε το καλύτερο ταίρι
+        # Calculate Cosine Similarity for best pairing
         scores = np.dot(suspicious_matrix, anchor_vec)
         norm_anchor = norm(anchor_vec) + 1e-8
         norm_susp = norm(suspicious_matrix, axis=1) + 1e-8
@@ -173,37 +168,37 @@ class TripletDataset(Dataset):
         else:
             data = np.load(os.path.join(self.tracks_dir, anchor_name))
 
-        # 1. Anchor Selection
+        # Anchor Selection
         a_ver = 0 # Original
         anchor_seg_idx = random.randint(0, data.shape[1] - 1)
         anchor_sample = data[a_ver, anchor_seg_idx]
 
-        # 2. Positive Mining (Η καρδιά της μεθόδου μας!)
+        # Positive Mining
         p_ver = 1 # Cover
         if data.shape[0] > 1:
             cover_all_segments = data[p_ver]
             
-            # Υπολογίζουμε vectors για τη σύγκριση
+            # Compute vectors for matching
             anchor_flat = np.mean(anchor_sample, axis=(0, 1))
             cover_flat_matrix = np.mean(cover_all_segments, axis=(1, 2))
             
-            # Βρίσκουμε το segment που μοιάζει πιο πολύ στο Anchor
+            # Find the segment closest to Anchor
             best_match_idx = self._find_best_match(anchor_flat, cover_flat_matrix)
             positive_sample = data[p_ver, best_match_idx]
         else:
-            # Fallback αν δεν υπάρχει cover
+            # Fallback
             positive_sample = anchor_sample
 
-        # 3. Negative Selection
+        # Negative Selection
         if random.random() < 0.5:
-            # Hard Negative: Ίδιο τραγούδι, άλλο segment
+            # Hard Negative: Other segment from Anchor version
             neg_ver = a_ver
             neg_seg = random.randint(0, data.shape[1] - 1)
             while neg_seg == anchor_seg_idx and data.shape[1] > 1:
                 neg_seg = random.randint(0, data.shape[1] - 1)
             negative_sample = data[neg_ver, neg_seg]
         else:
-            # Easy Negative: Άλλο τραγούδι
+            # Easy Negative: Random segment from different track
             neg_idx = random.randint(0, len(self.source) - 1)
             while neg_idx == idx:
                 neg_idx = random.randint(0, len(self.source) - 1)

@@ -4,22 +4,17 @@ import yt_dlp
 from tqdm import tqdm
 from typing import Dict, Any
 
-# --- ΡΥΘΜΙΣΕΙΣ ---
 CSV_FILE = "Final_dataset_pairs.csv"
 OUTPUT_DIR = "data/raw_smp"
 
-# ✅ ΤΑ ΣΩΣΤΑ ΟΝΟΜΑΤΑ ΣΤΗΛΩΝ (από το αρχείο που ανέβασες)
 COL_ORIGINAL = "ori_link"
 COL_SUSPICIOUS = "comp_link"
-# -----------------
 
 def download_audio(url, output_path):
-    """Κατεβάζει το audio από YouTube και το σώζει ως .wav"""
+    """Downloads audio from YouTube and saves it as .wav"""
     
-    # Δηλώνουμε ρητά τον τύπο για να μην παραπονιέται ο linter
     ydl_opts: Dict[str, Any] = {
         'format': 'bestaudio/best',
-        # Το yt-dlp βάζει μόνο του την επέκταση, οπότε την αφαιρούμε από το path
         'outtmpl': output_path.replace('.wav', ''), 
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
@@ -31,39 +26,38 @@ def download_audio(url, output_path):
     }
     
     try:
-        # Το type: ignore λέει στο VS Code να αγνοήσει το συγκεκριμένο λάθος τύπου
         with yt_dlp.YoutubeDL(ydl_opts) as ydl: # type: ignore
             ydl.download([url])
         return True
     except Exception as e:
-        print(f"\n❌ Error downloading {url}: {e}")
+        print(f"\nError downloading {url}: {e}")
         return False
 
 def main():
     if not os.path.exists(CSV_FILE):
-        print(f"Δεν βρέθηκε το αρχείο {CSV_FILE}. Βεβαιώσου ότι είναι στον ίδιο φάκελο.")
+        print(f"Couldn't find the file {CSV_FILE}.")
         return
 
-    # Διάβασμα του CSV
+    # Read CSV
     try:
         df = pd.read_csv(CSV_FILE)
-        print(f"Βρέθηκαν {len(df)} ζευγάρια στο CSV.")
+        print(f"Found {len(df)} pairs inside the CSV.")
     except Exception as e:
-        print(f"Σφάλμα κατά την ανάγνωση του CSV: {e}")
+        print(f"Error reading CSV: {e}")
         return
 
-    # Δημιουργία κεντρικού φακέλου
+    # Create output directory
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     success_count = 0
 
-    # Iteration σε κάθε γραμμή του CSV
+    # Iteration over rows
     for idx, row in tqdm(df.iterrows(), total=len(df), desc="Downloading Dataset"):
-        # Δημιουργία φακέλου για το ζευγάρι (π.χ. data/raw_smp/pair_0)
+        # Create pair folder
         pair_folder = os.path.join(OUTPUT_DIR, f"pair_{idx}")
         os.makedirs(pair_folder, exist_ok=True)
 
-        # 1. Κατέβασμα Original
+        # Download Original
         orig_url = row[COL_ORIGINAL]
         orig_path = os.path.join(pair_folder, "original.wav")
         
@@ -72,7 +66,7 @@ def main():
         else:
             ok1 = True
 
-        # 2. Κατέβασμα Suspicious (Plagiarized)
+        # Download Suspicious (Plagiarized)
         susp_url = row[COL_SUSPICIOUS]
         susp_path = os.path.join(pair_folder, "suspicious.wav")
         
@@ -84,8 +78,8 @@ def main():
         if ok1 and ok2:
             success_count += 1
     
-    print(f"\n✅ Ολοκληρώθηκε! Κατέβηκαν επιτυχώς {success_count}/{len(df)} ζευγάρια.")
-    print(f"Τα αρχεία βρίσκονται στο: {OUTPUT_DIR}")
+    print(f"\n✅ Finished! Downloaded {success_count}/{len(df)} pairs.")
+    print(f"Files can be found at: {OUTPUT_DIR}")
 
 if __name__ == "__main__":
     main()
