@@ -127,39 +127,24 @@ def create_audio_dataloader(
     return dataloader
 
 
-# ==========================================
-# PART 2: TRIPLET DATASET (TRAINING)
-# ==========================================
-
+# --- SMART DATASET (WITH MINING) ---
 class TripletDataset(Dataset):
-    def __init__(
-        self, 
-        tracks_dir: str, 
-        store_dict: bool = True, 
-        length_mult: int = 1, 
-    ):
+    def __init__(self, tracks_dir: str, store_dict: bool = True, length_mult: int = 1):
         super().__init__()
-        self.source = sorted([
-            s for s in os.listdir(tracks_dir) 
-            if s.endswith('.npy') and not s.startswith('.')
-        ])
-        
-        # Προσπάθεια για numerical sort αν τα αρχεία είναι 'pair_1.npy', 'pair_2.npy' κλπ.
+        self.source = sorted([s for s in os.listdir(tracks_dir) if s.endswith('.npy') and not s.startswith('.')])
         try:
             self.source.sort(key=lambda x: int(x.replace('pair_', '').replace('.npy', '')))
         except ValueError:
             self.source.sort()
-
+            
         self.tracks_dir = tracks_dir
         self.store_dict = store_dict
-        
         if self.store_dict:
             self.track_dict = self._create_track_dict()
-            
         print(f"[Dataset] Loaded {len(self.source)} embedding tracks.")
         self.length_mult = length_mult
 
-    def _create_track_dict(self) -> Dict[str, np.ndarray]:
+    def _create_track_dict(self):
         track_dict = {}
         print("Loading embeddings into RAM...")
         for track in self.source:
@@ -171,23 +156,16 @@ class TripletDataset(Dataset):
         return len(self.source) * self.length_mult
 
     def _find_best_match(self, anchor_vec, suspicious_matrix):
-        """
-        Βρίσκει το segment του Cover που έχει το μεγαλύτερο Cosine Similarity με το Anchor.
-        anchor_vec: [Features]
-        suspicious_matrix: [Segments, Features]
-        """
+        # Υπολογισμός Cosine Similarity για να βρούμε το καλύτερο ταίρι
         scores = np.dot(suspicious_matrix, anchor_vec)
-        
         norm_anchor = norm(anchor_vec) + 1e-8
         norm_susp = norm(suspicious_matrix, axis=1) + 1e-8
-        
         cosine_sims = scores / (norm_susp * norm_anchor)
         return np.argmax(cosine_sims)
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def __getitem__(self, idx):
         idx = int(idx // self.length_mult)
         idx = int(idx % len(self.source))
-        
         anchor_name = self.source[idx]
         
         if self.store_dict:
@@ -195,49 +173,42 @@ class TripletDataset(Dataset):
         else:
             data = np.load(os.path.join(self.tracks_dir, anchor_name))
 
-        # data shape: (Versions, Segments, Layers, Time, Feat)
-        n_versions = data.shape[0]
-        n_segments = data.shape[1]
-
         # 1. Anchor Selection
-        # Επιλέγουμε τυχαία μια version ως Anchor (συνήθως 0=Original)
-        a_ver = 0 
-        anchor_seg_idx = random.randint(0, n_segments - 1)
-        anchor_sample = data[a_ver, anchor_seg_idx] # (Layers, Time, Feat)
+        a_ver = 0 # Original
+        anchor_seg_idx = random.randint(0, data.shape[1] - 1)
+        anchor_sample = data[a_ver, anchor_seg_idx]
 
-        # 2. Positive Mining (Best Match)
-        # Βρίσκουμε την άλλη version (Cover)
-        possible_pos = [i for i in range(n_versions) if i != a_ver]
-        p_ver = random.choice(possible_pos) if possible_pos else a_ver
-        
-        # Παίρνουμε όλα τα segments του Cover
-        cover_all_segments = data[p_ver] # (Segments, Layers, Time, Feat)
-        
-        # Υπολογίζουμε Mean Vectors για τη σύγκριση (Mining)
-        # Anchor Mean: (Feat,)
-        anchor_flat = np.mean(anchor_sample, axis=(0, 1))
-        # Cover Mean Matrix: (Segments, Feat)
-        cover_flat_matrix = np.mean(cover_all_segments, axis=(1, 2))
-        
-        # Βρίσκουμε το καλύτερο ταίρι
-        best_match_idx = self._find_best_match(anchor_flat, cover_flat_matrix)
-        positive_sample = data[p_ver, best_match_idx]
+        # 2. Positive Mining (Η καρδιά της μεθόδου μας!)
+        p_ver = 1 # Cover
+        if data.shape[0] > 1:
+            cover_all_segments = data[p_ver]
+            
+            # Υπολογίζουμε vectors για τη σύγκριση
+            anchor_flat = np.mean(anchor_sample, axis=(0, 1))
+            cover_flat_matrix = np.mean(cover_all_segments, axis=(1, 2))
+            
+            # Βρίσκουμε το segment που μοιάζει πιο πολύ στο Anchor
+            best_match_idx = self._find_best_match(anchor_flat, cover_flat_matrix)
+            positive_sample = data[p_ver, best_match_idx]
+        else:
+            # Fallback αν δεν υπάρχει cover
+            positive_sample = anchor_sample
 
-        # 3. Negative Selection (50% Hard / 50% Easy)
+        # 3. Negative Selection
         if random.random() < 0.5:
-            # Hard Negative: Ίδιο τραγούδι (Original), άλλο segment
+            # Hard Negative: Ίδιο τραγούδι, άλλο segment
             neg_ver = a_ver
-            neg_seg = random.randint(0, n_segments - 1)
-            while neg_seg == anchor_seg_idx:
-                neg_seg = random.randint(0, n_segments - 1)
+            neg_seg = random.randint(0, data.shape[1] - 1)
+            while neg_seg == anchor_seg_idx and data.shape[1] > 1:
+                neg_seg = random.randint(0, data.shape[1] - 1)
             negative_sample = data[neg_ver, neg_seg]
         else:
             # Easy Negative: Άλλο τραγούδι
-            neg_file_idx = random.randint(0, len(self.source) - 1)
-            while neg_file_idx == idx:
-                neg_file_idx = random.randint(0, len(self.source) - 1)
+            neg_idx = random.randint(0, len(self.source) - 1)
+            while neg_idx == idx:
+                neg_idx = random.randint(0, len(self.source) - 1)
+            neg_name = self.source[neg_idx]
             
-            neg_name = self.source[neg_file_idx]
             if self.store_dict:
                 neg_data = self.track_dict[neg_name]
             else:
@@ -247,31 +218,17 @@ class TripletDataset(Dataset):
             neg_seg = random.randint(0, neg_data.shape[1] - 1)
             negative_sample = neg_data[neg_ver, neg_seg]
 
-        # Prepare Tensors
         def prepare(x):
             t = torch.from_numpy(x).float()
-            # (Layers, Time, Emb) -> (Layers, Emb, Time)
-            if t.ndim == 3: 
-                t = t.permute(0, 2, 1) 
-            # Flatten Layers: Concat στο dim=0 -> (Layers*Emb, Time) ή (Layers, Emb, Time)
-            # Εδώ κρατάμε τη δομή του προηγούμενου κώδικα (concat layers)
-            # Αν x είναι (Layers, Emb, Time), το cat dim=0 τα ενώνει σε (Layers*Emb, Time)
-            # Ο προηγούμενος κώδικας έκανε torch.cat([h for h in t], dim=0)
-            
-            # Βεβαιωνόμαστε ότι είναι (Layers, Emb, Time) πριν το concat
+            if t.ndim == 3: t = t.permute(0, 2, 1)
+            if t.ndim == 2: t = t.unsqueeze(-1).permute(0, 2, 1)
             return torch.cat([h for h in t], dim=0) 
 
         return prepare(anchor_sample), prepare(positive_sample), prepare(negative_sample)
 
 def triplet_collate_fn(batch):
     anchors, positives, negatives = zip(*batch)
-    
     def pad(t_list):
         max_l = max([t.shape[-1] for t in t_list])
         return torch.stack([torch.nn.functional.pad(t, (0, max_l - t.shape[-1])) for t in t_list])
-        
     return pad(anchors), pad(positives), pad(negatives)
-
-def create_triplet_dataloader(tracks_dir: str, batch_size: int, num_workers: int) -> DataLoader:
-    dataset = TripletDataset(tracks_dir)
-    return DataLoader(dataset, batch_size=batch_size, num_workers=num_workers, shuffle=True, collate_fn=triplet_collate_fn)
